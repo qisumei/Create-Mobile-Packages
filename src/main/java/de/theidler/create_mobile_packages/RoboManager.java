@@ -7,106 +7,109 @@ import net.minecraft.world.level.LevelAccessor;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 
 public class RoboManager {
-
-    public Map<UUID, RoboEntity> robos;
-    public Map<UUID, RoboEntity> clientRobos;
-    public List<RoboEntity> robosToAdd;
-
+    private final Map<UUID, RoboEntity> robos = new ConcurrentHashMap<>();
+    private final Map<UUID, RoboEntity> clientRobos = new ConcurrentHashMap<>();
+    private final List<RoboEntity> robosToAdd = Collections.synchronizedList(new ArrayList<>());
+    
     private RoboManagerSavedData savedData;
     private Level level;
-
-    public RoboManager() {
-        cleanUp();
-    }
+    
+    // Reusable consumer for tick operations
+    private final Consumer<RoboEntity> roboTickConsumer = robo -> {
+        if (robo != null && !robo.isRemoved()) {
+            level.guardEntityTick(entity -> {}, robo);
+            robo.roboMangerTick();
+        }
+    };
 
     public void markDirty() {
-        if (savedData != null)
+        if (savedData != null) {
             savedData.setDirty();
+        }
     }
 
     public void tick(Level level) {
-        if (level.dimension() != Level.OVERWORLD)
-            return;
+        if (level.dimension() != Level.OVERWORLD) return;
 
-        tickRobos(level);
+        this.level = level; // Update level reference
+        processRoboTicks();
     }
 
-    private void tickRobos(Level level) {
+    private void processRoboTicks() {
+        // Process pending additions first
         addPendingRobos();
-        tickExistingRobos(level);
+        
+        // Process ticks for all active robos
+        tickActiveRobos();
+        
+        // Clean up removed robos
         removeMarkedRobos();
     }
 
     private void addPendingRobos() {
         if (robosToAdd.isEmpty()) return;
         
-        List<RoboEntity> newRobos = new ArrayList<>(robosToAdd);
+        // Minimize synchronization by working on a copy
+        List<RoboEntity> newRobos;
+        synchronized (robosToAdd) {
+            newRobos = new ArrayList<>(robosToAdd);
+            robosToAdd.clear();
+        }
+        
         for (RoboEntity robo : newRobos) {
-            if (robo.level().isClientSide()) {
-                clientRobos.put(robo.getUUID(), robo);
-            } else {
-                robos.put(robo.getUUID(), robo);
+            if (robo != null) {
+                (robo.level().isClientSide() ? clientRobos : robos).put(robo.getUUID(), robo);
             }
         }
-        robosToAdd.removeAll(newRobos);
     }
 
-    private void tickExistingRobos(Level level) {
-        if (robos.isEmpty() && clientRobos.isEmpty()) return;
+    private void tickActiveRobos() {
+        // Process server-side robos
+        robos.values().forEach(roboTickConsumer);
         
-        robos.values().stream()
-            .filter(Objects::nonNull)
-            .forEach(robo -> {
-                level.guardEntityTick(entity -> {}, robo);
-                robo.roboMangerTick();
-            });
-        clientRobos.values().stream()
-            .filter(Objects::nonNull)
-            .forEach(robo -> {
-                level.guardEntityTick(entity -> {}, robo);
-                robo.roboMangerTick();
-            });
+        // Process client-side robos if needed
+        if (!clientRobos.isEmpty()) {
+            clientRobos.values().forEach(roboTickConsumer);
+        }
     }
 
     private void removeMarkedRobos() {
-        if (robos.isEmpty() && clientRobos.isEmpty()) return;
-        robos.entrySet().removeIf(entry -> entry.getValue().isRemoved());
-        clientRobos.entrySet().removeIf(entry -> entry.getValue().isRemoved());
+        robos.values().removeIf(robo -> robo == null || robo.isRemoved());
+        clientRobos.values().removeIf(robo -> robo == null || robo.isRemoved());
     }
 
     public void addRobo(RoboEntity robo) {
-        robosToAdd.add(robo);
+        if (robo != null) {
+            robosToAdd.add(robo);
+        }
     }
 
     public Level getLevel() {
         return level;
     }
+
     public void setLevel(Level level) {
         this.level = level;
     }
 
     public void levelLoaded(LevelAccessor level) {
+        if (!(level instanceof Level)) return;
+        
         this.level = (Level) level;
         MinecraftServer server = level.getServer();
-        if (server == null || server.overworld() != level)
+        
+        if (server == null || server.overworld() != level) {
+            savedData = null;
             return;
-        cleanUp();
-        savedData = null;
-        loadRoboData(server);
-    }
-
-    private void loadRoboData(MinecraftServer server) {
-        if (savedData != null)
-            return;
-        savedData = RoboManagerSavedData.load(server);
-        robos = savedData.getRobos();
-    }
-
-    private void cleanUp() {
-        this.robos = new ConcurrentHashMap<>();
-        this.robosToAdd = new ArrayList<>();
-        this.clientRobos = new ConcurrentHashMap<>();
+        }
+        
+        // Only load data if we don't have it already
+        if (savedData == null) {
+            savedData = RoboManagerSavedData.load(server);
+            robos.putAll(savedData.getRobos());
+        }
     }
 }
