@@ -44,7 +44,7 @@ public class RoboManagerSavedData extends SavedData {
     public CompoundTag save(CompoundTag nbt, HolderLookup.Provider provider) {
         RoboManager roboManager = CreateMobilePackages.ROBO_MANAGER;
         CreateMobilePackages.LOGGER.info("Saving RoboManager...");
-        nbt.put("Robos", NBTHelper.writeCompoundList(roboManager.robos.values(), robo -> {
+        nbt.put("Robos", NBTHelper.writeCompoundList(roboManager.getRobos(), robo -> {
             CompoundTag roboTag = new CompoundTag();
             roboTag.putInt("Id", robo.getId());
             return roboTag;
