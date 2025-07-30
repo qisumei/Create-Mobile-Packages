@@ -8,6 +8,10 @@ import net.minecraft.world.level.LevelAccessor;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
+public Collection<RoboEntity> getRobos() {
+    return robos.values();
+}
+
 public class RoboManager {
 
     public Map<UUID, RoboEntity> robos;
